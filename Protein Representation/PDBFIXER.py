@@ -75,7 +75,7 @@ def fix_one(task: Tuple[str, Path, Path, bool]) -> Dict[str, str]:
                 "reason": "",
             }
         fixer = PDBFixer(filename=str(input_path))
-        fixer.findMissingResidues()
+        fixer.missingResidues = {}
         fixer.findMissingAtoms()
         fixer.addMissingAtoms()
         output_path.parent.mkdir(parents=True, exist_ok=True)
