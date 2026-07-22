@@ -23,7 +23,7 @@ def build_dataset_configs(dataset_root: str, dataset_names: Sequence[str]) -> Li
         dataset_dir = os.path.join(dataset_root, dataset_name)
         configs.append({
             "dataset_name": dataset_name,
-            "input_pdb_dir": os.path.join(dataset_dir, "PDB"),
+            "input_pdb_dir": os.path.join(dataset_dir, "PDBFIXER"),
             "output_pqr_dir": os.path.join(dataset_dir, "PQR"),
         })
     return configs
