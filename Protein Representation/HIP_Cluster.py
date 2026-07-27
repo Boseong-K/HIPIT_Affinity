@@ -362,7 +362,7 @@ def _worker_compute_cluster(graph_path_str):
             "interface_source": "bsa_values",
             "interface_threshold": 0.0,
             "interface_count": int(interface_mask.sum().item()),
-            "cluster_level_0": cluster.long(),
+            "cluster": cluster.long(),
         }
         cluster_path.parent.mkdir(parents=True, exist_ok=True)
         torch.save(payload, cluster_path)
