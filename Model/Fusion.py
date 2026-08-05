@@ -5,7 +5,7 @@ class CrossAttentionFusion(nn.Module):
     def __init__(self, egnn_dim):
         super().__init__()
         egnn_dim = int(egnn_dim)
-        self.num_chunks = 8
+        self.num_chunks = 4
         self.fusion_dim = egnn_dim
         self.fusion_norm = nn.LayerNorm(self.fusion_dim)
         self.chunk_width = egnn_dim // self.num_chunks
