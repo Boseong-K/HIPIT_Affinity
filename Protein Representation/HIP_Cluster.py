@@ -10,8 +10,8 @@ from torch_geometric.utils import to_networkx
 from tqdm import tqdm
 
 INPUT_ROOT = ""
-OUTPUT_ROOT = ""
-FORCE_REBUILD = False
+OUTPUT_ROOT = "r"
+FORCE_REBUILD = True
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -33,7 +33,7 @@ def graph_distance(G):
         return np.zeros((n, n))
     return np.asarray(nx.floyd_warshall_numpy(G, weight=None), dtype=float)
 
-def _total_magnitude(distances):
+def _graph_spread(distances):
     distances = np.asarray(distances, dtype=float)
     if distances.ndim != 2 or distances.shape[0] != distances.shape[1]:
         raise ValueError("D must be square.")
@@ -45,27 +45,27 @@ def _total_magnitude(distances):
     denom = np.where(np.abs(denom) < 1e-12, 1e-12, denom)
     return float(np.sum(1.0 / denom))
 
-def _magnitudes_per_subgraph(G, subgraphs=None):
+def _spread_per_subgraph(G, subgraphs=None):
     if subgraphs is None:
         subgraphs = [G.subgraph(c).copy() for c in nx.connected_components(G)]
     distances_list = []
-    mags = []
+    spreads = []
     for subgraph in subgraphs:
         distances = graph_distance(subgraph)
         distances_list.append(distances)
-        mags.append(_total_magnitude(distances))
-    total_magnitude = float(np.sum(mags)) if mags else 0.0
-    return total_magnitude, subgraphs, distances_list, mags
+        spreads.append(_graph_spread(distances))
+    total_spread = float(np.sum(spreads)) if spreads else 0.0
+    return total_spread, subgraphs, distances_list, spreads
 
-def _edge_removal_scores(edges, original_total, subgraphs, distances_list, mags):
+def _edge_removal_scores(edges, original_total, subgraphs, distances_list, spreads):
     subgraph_index = [{node: idx for idx, node in enumerate(subgraph.nodes())} for subgraph in subgraphs]
     scores = []
     for node_a, node_b in edges:
-        mags_steps = []
+        spread_steps = []
         for i, subgraph in enumerate(subgraphs):
             index = subgraph_index[i]
             if node_a not in index or node_b not in index:
-                mags_steps.append(mags[i])
+                spread_steps.append(spreads[i])
                 continue
             neighbors_a = set(subgraph.neighbors(node_a)) - {node_b}
             neighbors_b = set(subgraph.neighbors(node_b)) - {node_a}
@@ -79,8 +79,8 @@ def _edge_removal_scores(edges, original_total, subgraphs, distances_list, mags)
                 distances_sub[idx_a, idx_n] = min(dmat[idx_a, idx_n], dmat[idx_b, idx_n])
             distances_sub = np.delete(distances_sub, idx_b, axis=0)
             distances_sub = np.delete(distances_sub, idx_b, axis=1)
-            mags_steps.append(_total_magnitude(distances_sub))
-        scores.append(abs(original_total - sum(mags_steps)))
+            spread_steps.append(_graph_spread(distances_sub))
+        scores.append(abs(original_total - sum(spread_steps)))
     return scores
 
 def assignment_to_clusters(assignment_matrix):
@@ -91,14 +91,14 @@ def assignment_to_clusters(assignment_matrix):
     assignment = np.array(assignment)
     return assignment.squeeze()
 
-def mag_edge_pool(g, n_steps=None):
-    original_total, subgraphs, distances_list, mags = _magnitudes_per_subgraph(g)
+def spread_edge_pool(g, n_steps=None):
+    original_total, subgraphs, distances_list, spreads = _spread_per_subgraph(g)
     this_graph = g.copy()
     n = g.number_of_nodes()
     if n_steps is None:
         n_steps = n - 1
     edges = list(this_graph.edges())
-    scores = _edge_removal_scores(edges, original_total, subgraphs, distances_list, mags)
+    scores = _edge_removal_scores(edges, original_total, subgraphs, distances_list, spreads)
     scores = np.asarray(scores, dtype=float).reshape(-1).tolist()
     n_steps = min(n_steps, len(scores))
     assignment_matrix = np.eye(n)
@@ -179,8 +179,8 @@ def _coarsen_graph_from_cluster(graph, cluster):
             next_graph.add_edge(cluster_a, cluster_b)
     return nx.convert_node_labels_to_integers(next_graph, ordering="sorted")
 
-def mag_edge_pool_disjoint(g, n_steps=None):
-    original_total, subgraphs, distances_list, mags = _magnitudes_per_subgraph(g)
+def spread_edge_pool_disjoint(g, n_steps=None):
+    original_total, subgraphs, distances_list, spreads = _spread_per_subgraph(g)
     edges = list(g.edges())
     n = g.number_of_nodes()
     if n_steps is None:
@@ -188,7 +188,7 @@ def mag_edge_pool_disjoint(g, n_steps=None):
     if not edges or n_steps <= 0:
         cluster = torch.arange(n, dtype=torch.long)
         return g.copy(), None, cluster
-    scores = _edge_removal_scores(edges, original_total, subgraphs, distances_list, mags)
+    scores = _edge_removal_scores(edges, original_total, subgraphs, distances_list, spreads)
     scores = np.asarray(scores, dtype=float).reshape(-1)
     node_to_idx = {node: idx for idx, node in enumerate(g.nodes())}
     cluster = torch.arange(n, dtype=torch.long)
@@ -305,9 +305,9 @@ def compute_cluster(graph, interface_mask):
     local_mapping = {node: idx for idx, node in enumerate(local_nodes)}
     local_graph = nx.relabel_nodes(poolable_subgraph, local_mapping, copy=True)
     if n_steps <= max(1, len(local_nodes) // 2):
-        _, _, cluster_np = mag_edge_pool_disjoint(local_graph, n_steps=n_steps)
+        _, _, cluster_np = spread_edge_pool_disjoint(local_graph, n_steps=n_steps)
     else:
-        _, _, cluster_np = mag_edge_pool(local_graph, n_steps=n_steps)
+        _, _, cluster_np = spread_edge_pool(local_graph, n_steps=n_steps)
     local_cluster = _cluster_np_to_labels(cluster_np, len(local_nodes))
     full_cluster = torch.full((n,), -1, dtype=torch.long)
     for cluster_id, node in enumerate(interface_nodes):
@@ -355,7 +355,7 @@ def _worker_compute_cluster(graph_path_str):
             "ratio": 0.7,
             "min_nodes": 16,
             "metric": "shortest_path_distance",
-            "mag_method": "spread",
+            "spread_method": "spread",
             "pooling_method": "SpreadEdgePoolApprox",
             "nodes_per_level": [num_nodes],
             "preserve_interface": True,
@@ -398,7 +398,7 @@ def _collect_graph_paths(input_dirs, input_files, pattern, recursive):
         paths.append(path)
     return sorted(dict.fromkeys(path.resolve() for path in paths))
 
-def build_clusters(graph_paths):
+def build_clusters(graph_paths, max_workers=8):
     if not graph_paths:
         return []
     rows = []
@@ -412,7 +412,7 @@ def build_clusters(graph_paths):
         else:
             missing_paths.append(path)
         scan.set_postfix(cached=sum(item["status"] == "cached" for item in rows), missing=len(missing_paths))
-    workers = max(1, min(8, len(missing_paths))) if missing_paths else 1
+    workers = max(1, min(max_workers, len(missing_paths))) if missing_paths else 1
     if missing_paths and workers == 1:
         iterator = tqdm(missing_paths, desc="ClusterBuild")
         for path in iterator:
@@ -447,7 +447,7 @@ def main():
     if not graph_paths:
         raise RuntimeError("No graph .pt files found.")
     tqdm.write(f"Graphs={len(graph_paths)} | Ratio=0.7 | Output={OUTPUT_ROOT}")
-    rows = build_clusters(graph_paths)
+    rows = build_clusters(graph_paths, args.workers)
     ok = sum(item["status"] == "ok" for item in rows)
     cached = sum(item["status"] == "cached" for item in rows)
     fail = sum(item["status"] == "fail" for item in rows)
