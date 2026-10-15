@@ -131,7 +131,7 @@ python Inference.py --checkpoint ../Output/HIPIT-Affinity.pt \
 
 ## License
 
-This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
+This project is available for research and other non-commercial purposes only
 
 ## Contact
 
